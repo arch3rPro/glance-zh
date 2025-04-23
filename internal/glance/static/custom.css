@@ -1,0 +1,22 @@
+.vms-list.dynamic-columns {
+    --columns-per-row: 4 !important;
+    min-width: 0;
+}
+
+.vm-item {
+    min-width: 200px;
+}
+
+@container widget (min-width: 1500px) {
+    .vms-list.dynamic-columns {
+        --columns-per-row: 4 !important;
+    }
+    .vms-list.dynamic-columns > :nth-child(4n+1) {
+        border-left: none;
+        padding-left: 0;
+    }
+    .vms-list.dynamic-columns > :nth-child(5n+1):not(:nth-child(4n+1)) {
+        border-left: 1px solid var(--color-separator);
+        padding-left: var(--widget-content-horizontal-padding);
+    }
+}

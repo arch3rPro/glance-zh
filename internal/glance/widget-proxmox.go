@@ -3,6 +3,7 @@ package glance
 import (
 	"context"
 	"errors"
+	"fmt"
 	"html/template"
 	"math"
 	"net/http"
@@ -14,18 +15,21 @@ import (
 var proxmoxStatsWidgetTemplate = mustParseTemplate("proxmox.html", "widget-base.html")
 
 type proxmoxWidget struct {
-	widgetBase `yaml:",inline"`
-	URL        string             `yaml:"url"`
-	Token      string             `yaml:"token"`
-	Secret     string             `yaml:"secret"`
-	HideSwap   bool               `yaml:"hide-swap"`
-	Nodes      []proxmoxNodeStats `yaml:"-"`
+	widgetBase    `yaml:",inline"`
+	URL           string             `yaml:"url"`
+	Token         string             `yaml:"token"`
+	Secret        string             `yaml:"secret"`
+	HideSwap      bool               `yaml:"hide-swap"`
+	HideStopped   bool               `yaml:"hide-stopped"`
+	AllowInsecure bool               `yaml:"allow-insecure"`
+	Nodes         []proxmoxNodeStats `yaml:"-"`
 }
 
 type proxmoxNodeStats struct {
 	Name        string
 	IsReachable bool
 	HideSwap    bool
+	HideStopped bool
 	BootTime    time.Time
 	Hostname    string
 	Platform    string
@@ -53,6 +57,7 @@ type proxmoxNodeStats struct {
 
 	Disk        nodeStorageInfo
 	Mountpoints []nodeStorageInfo
+	VMs         []proxmoxVMStats
 }
 
 type nodeStorageInfo struct {
@@ -140,13 +145,28 @@ type proxmoxNodeStatus struct {
 }
 
 func (widget *proxmoxWidget) initialize() error {
-	widget.withTitle("Proxmox Stats").withCacheDuration(15 * time.Second)
+	widget.withTitle("PVE监控").withCacheDuration(15 * time.Second)
 
 	if widget.URL == "" {
 		return errors.New("URL is required")
 	}
 
 	return nil
+}
+
+type proxmoxVMStats struct {
+	VMID          int
+	Name          string
+	Status        string
+	CPUPercent    uint8
+	MemoryTotalMB uint64
+	MemoryUsedMB  uint64
+	MemoryPercent uint8
+	DiskTotalMB   uint64
+	DiskUsedMB    uint64
+	DiskPercent   uint8
+	Uptime        int64
+	UptimeStr     string
 }
 
 func (widget *proxmoxWidget) update(context.Context) {
@@ -165,6 +185,7 @@ func (widget *proxmoxWidget) update(context.Context) {
 		node.Name = resource.Node
 		node.BootTime = time.Unix(time.Now().Unix()-resource.Uptime, 0)
 		node.HideSwap = widget.HideSwap
+		node.HideStopped = widget.HideStopped
 
 		status, err := fetchProxmoxNodeStatus(widget, resource.Node)
 		if err != nil {
@@ -225,6 +246,59 @@ func (widget *proxmoxWidget) update(context.Context) {
 			node.Mountpoints = append(node.Mountpoints, storageInfo)
 		}
 
+		// 获取虚拟机信息
+		node.VMs = make([]proxmoxVMStats, 0)
+		for _, vm := range resources {
+			if vm.Type != "qemu" || vm.Node != node.Name {
+				continue
+			}
+
+			// 如果配置了隐藏已停止的虚拟机，且当前虚拟机状态为stopped或unknown，则跳过
+			if node.HideStopped && (vm.Status == "stopped" || vm.Status == "unknown") {
+				continue
+			}
+
+			vmStats := proxmoxVMStats{
+				VMID:          vm.VMID,
+				Name:          vm.Name,
+				Status:        vm.Status,
+				CPUPercent:    uint8(math.Min(vm.CPU*100, 100)),
+				MemoryTotalMB: uint64(vm.MaxMem) / 1024 / 1024,
+				MemoryUsedMB:  uint64(vm.Mem) / 1024 / 1024,
+				DiskTotalMB:   vm.MaxDisk / 1024 / 1024,
+				DiskUsedMB:    vm.Disk / 1024 / 1024,
+				Uptime:        vm.Uptime,
+			}
+
+			if vmStats.MemoryTotalMB > 0 {
+				vmStats.MemoryPercent = uint8(math.Min(float64(vmStats.MemoryUsedMB)/float64(vmStats.MemoryTotalMB)*100, 100))
+			}
+			if vmStats.DiskTotalMB > 0 {
+				vmStats.DiskPercent = uint8(math.Min(float64(vmStats.DiskUsedMB)/float64(vmStats.DiskTotalMB)*100, 100))
+			}
+
+			// 格式化运行时长
+			uptime := time.Duration(vmStats.Uptime) * time.Second
+			days := int(uptime.Hours() / 24)
+			hours := int(uptime.Hours()) % 24
+			minutes := int(uptime.Minutes()) % 60
+
+			if days > 0 {
+				vmStats.UptimeStr = fmt.Sprintf("%dd %dh %dm", days, hours, minutes)
+			} else if hours > 0 {
+				vmStats.UptimeStr = fmt.Sprintf("%dh %dm", hours, minutes)
+			} else {
+				vmStats.UptimeStr = fmt.Sprintf("%dm", minutes)
+			}
+
+			node.VMs = append(node.VMs, vmStats)
+		}
+
+		// 按VMID排序虚拟机列表
+		sort.Slice(node.VMs, func(i, j int) bool {
+			return node.VMs[i].VMID < node.VMs[j].VMID
+		})
+
 		nodes = append(nodes, node)
 	}
 
@@ -246,7 +320,8 @@ func fetchProxmoxClusterResources(w *proxmoxWidget) ([]proxmoxClusterResource, e
 	request, _ := http.NewRequestWithContext(ctx, "GET", w.URL+"/api2/json/cluster/resources", nil)
 	request.Header.Set("Authorization", "PVEAPIToken="+w.Token+"="+w.Secret)
 
-	result, err := decodeJsonFromRequest[multipleResponse[proxmoxClusterResource]](defaultHTTPClient, request)
+	var client = ternary(w.AllowInsecure, defaultInsecureHTTPClient, defaultHTTPClient)
+	result, err := decodeJsonFromRequest[multipleResponse[proxmoxClusterResource]](client, request)
 	if err != nil {
 		return nil, err
 	}
@@ -261,9 +336,10 @@ func fetchProxmoxNodeStatus(w *proxmoxWidget, node string) (*proxmoxNodeStatus, 
 	request, _ := http.NewRequestWithContext(ctx, "GET", w.URL+"/api2/json/nodes/"+node+"/status", nil)
 	request.Header.Set("Authorization", "PVEAPIToken="+w.Token+"="+w.Secret)
 
+	var client = ternary(w.AllowInsecure, defaultInsecureHTTPClient, defaultHTTPClient)
 	var result singleResponse[proxmoxNodeStatus]
 
-	result, err := decodeJsonFromRequest[singleResponse[proxmoxNodeStatus]](defaultHTTPClient, request)
+	result, err := decodeJsonFromRequest[singleResponse[proxmoxNodeStatus]](client, request)
 	if err != nil {
 		return nil, err
 	}

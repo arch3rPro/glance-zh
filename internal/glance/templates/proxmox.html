@@ -1,5 +1,7 @@
 {{ template "widget-base.html" . }}
 
+{{- define "widget-content-classes" }}dynamic-columns-container{{ end }}
+
 {{- define "widget-content" }}
 {{- range .Nodes }}
 <div class="server">
@@ -129,7 +131,150 @@
                 </div>
             </div>
         </div>
+        <style>
+            /* 服务器状态响应式布局 */
+            @container widget (max-width: 600px) {
+                .server-stats {
+                    flex-direction: column;
+                    gap: 15px;
+                }
+                .server-stats > div {
+                    width: 100%;
+                }
+            }
+            
+            /* 服务器信息响应式布局 */
+            @container widget (max-width: 500px) {
+                .server-info {
+                    flex-direction: column;
+                    align-items: flex-start;
+                }
+                .server-info .shrink-0 {
+                    margin-top: 10px;
+                }
+            }
+        </style>
     </div>
+
+    {{- if .VMs }}
+</div>
+
+
+  <div class="margin-top-20">
+
+    <div class="server-name color-highlight size-h3" style="text-align: center; margin-bottom: 20px;" ><b> 🚀 虚拟机监控</b></div>
+
+    <div class="vms-container">
+        <div class="vms-list list collapsible-container" data-collapse-after="5" style="display: grid; gap: 1rem;">
+            <style>
+                .vm-item {
+                    min-width: 200px;
+                }
+                
+                .vms-list {
+                    grid-template-columns: 1fr;
+                }
+                /* @container widget (min-width: 200px) {
+                    .vms-list {
+                        grid-template-columns: repeat(1, 1fr);
+                    }
+                } */
+                @container widget (min-width: 800px) {
+                    .vms-list {
+                        grid-template-columns: repeat(2, 1fr);
+                    }
+                }
+                
+                @container widget (min-width: 1200px) {
+                    .vms-list {
+                        grid-template-columns: repeat(3, 1fr);
+                    }
+                }
+                
+                .vms-list > * {
+                    padding: var(--widget-content-vertical-padding);
+                    border: 1px solid var(--color-border);
+                    margin: 0;
+                }
+            </style>
+            {{- range .VMs }}
+            <div class="vm-item bg-card radius-medium padding-4" style="border: 1px solid var(--color-border);">
+                <div class="flex flex-wrap items-center margin-bottom-3">
+                    <div class="size-h5 color-highlight margin-right-2"><span class="color-base">ID:</span>{{ .VMID }} <span class="margin-left-2">{{ .Name }}</span></div>
+                    <div class="status-badge margin-right-2 {{ if eq .Status "running" }}bg-positive{{ else }}bg-negative{{ end }}">
+                        {{ if eq .Status "running" }}运行中{{ else }}已停止{{ end }}
+                    </div>
+                    <div class="uptime-info"><span class="color-text-subdue">运行时长:</span>{{ .UptimeStr }}</div>
+                </div>
+                <div class="vm-stats grid gap-3 vm-stats-responsive">
+                <style>
+                    /* 响应式VM状态布局 */
+                    .vm-stats-responsive {
+                        grid-template-columns: 1fr;
+                    }
+                    
+                    @container widget (min-width: 400px) {
+                        .vm-stats-responsive {
+                            grid-template-columns: repeat(3, 1fr);
+                        }
+                    }
+                    
+                    /* 状态标签和运行时间信息样式 */
+                    .status-badge {
+                        padding: 2px 6px;
+                        border-radius: 3px;
+                        font-size: var(--font-size-h6);
+                        white-space: nowrap;
+                    }
+                    
+                    .uptime-info {
+                        margin-left: auto;
+                        white-space: nowrap;
+                        font-size: var(--font-size-h5);
+                    }
+                    
+                    /* Small模式下的样式调整 */
+                    @container widget (max-width: 400px) {
+                        .uptime-info {
+                            width: 100%;
+                            margin-top: 4px;
+                            margin-left: 0;
+                        }
+                    }
+                </style>
+                    <div class="stat">
+                        <div class="flex justify-between items-end size-h5 margin-bottom-1">
+                            <div>CPU</div>
+                            <div class="color-highlight text-very-compact">{{ .CPUPercent }}<span class="color-base">%</span></div>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-value{{ if ge .CPUPercent 85 }} progress-value-notice{{ end }}" style="--percent: {{ .CPUPercent }}"></div>
+                        </div>
+                    </div>
+                    <div class="stat">
+                        <div class="flex justify-between items-end size-h5 margin-bottom-1">
+                            <div>内存</div>
+                            <div class="color-highlight text-very-compact">{{ .MemoryPercent }}<span class="color-base">%</span></div>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-value{{ if ge .MemoryPercent 85 }} progress-value-notice{{ end }}" style="--percent: {{ .MemoryPercent }}"></div>
+                        </div>
+                    </div>
+                    <div class="stat">
+                        <div class="flex justify-between items-end size-h5 margin-bottom-1">
+                            <div>磁盘</div>
+                            <div class="color-highlight text-very-compact">{{ .DiskPercent }}<span class="color-base">%</span></div>
+                        </div>
+                        <div class="progress-bar">
+                            <div class="progress-value{{ if ge .DiskPercent 85 }} progress-value-notice{{ end }}" style="--percent: {{ .DiskPercent }}"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            {{- end }}
+        </div>
+    </div>
+    {{- end }}
 </div>
 {{- end }}
 {{- end }}
